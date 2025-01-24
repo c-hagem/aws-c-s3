@@ -569,6 +569,12 @@ struct aws_s3_client_config {
      */
     const struct aws_byte_cursor *network_interface_names_array;
     size_t num_network_interface_names;
+
+    /* OPTIONAL
+     * To set an alternative location for ca-cert bundle.
+    */
+    struct aws_string *override_ca_path;
+    
 };
 
 struct aws_s3_checksum_config {

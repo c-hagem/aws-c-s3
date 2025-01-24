@@ -467,7 +467,9 @@ struct aws_s3_client *aws_s3_client_new(
             AWS_ZERO_STRUCT(default_tls_ctx_options);
 
             aws_tls_ctx_options_init_default_client(&default_tls_ctx_options, allocator);
-
+            if(client_config->override_ca_path) {
+                aws_tls_ctx_options_override_default_trust_store_from_path(&default_tls_ctx_options, NULL, client_config->overwrite_ca_path);
+            }
             struct aws_tls_ctx *default_tls_ctx = aws_tls_client_ctx_new(allocator, &default_tls_ctx_options);
             if (default_tls_ctx == NULL) {
                 goto on_error;
