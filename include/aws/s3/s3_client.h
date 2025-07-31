@@ -927,6 +927,14 @@ struct aws_s3_meta_request_options {
      * This will be ignored for other operations.
      */
     struct aws_byte_cursor copy_source_uri;
+
+    /*
+     *
+     * (Experimental)
+     * Enable the CRT to compute chunked checksums for the data of this meta request
+     */
+     bool compute_chunked_checksums;
+     uint64_t chunked_checksum_size;
 };
 
 /* Result details of a meta request.

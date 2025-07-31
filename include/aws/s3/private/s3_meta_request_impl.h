@@ -125,6 +125,16 @@ struct aws_s3_meta_request_vtable {
 };
 
 /**
+ * Holds information about a chunk of data we hold
+ */
+struct aws_s3_chunked_checksum {
+    uint64_t offset_start;
+    uint64_t offset_end;
+    struct aws_byte_buf checksum_data;
+    uint64_t computation_time_ns;
+};
+
+/**
  * This represents one meta request, ie, one accelerated file transfer.  One S3 meta request can represent multiple S3
  * requests.
  */
@@ -176,6 +186,21 @@ struct aws_s3_meta_request {
     aws_s3_meta_request_progress_fn *progress_callback;
     aws_s3_meta_request_telemetry_fn *telemetry_callback;
     aws_s3_meta_request_upload_review_fn *upload_review_callback;
+
+    // Data for computing a running checksum
+    struct {
+        bool enabled;
+        size_t chunk_size; // The preferred size of chunks
+        // uint64_t alignment_hint; // This is a hint that can be used for hinting that the first part should be checksummed with a different offset // TODO: Implement this
+
+        // Array to store completed checksums
+        struct aws_array_list chunk_checksums;  // array of struct aws_s3_chunked_checksum
+
+        // Running state
+        uint64_t total_bytes_received;
+        uint64_t last_checksummed_offset;
+    } chunked_checksum_data;
+
 
     enum aws_s3_meta_request_type type;
     struct aws_string *s3express_session_host;
