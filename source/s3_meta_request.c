@@ -333,7 +333,7 @@ int aws_s3_meta_request_init_base(
     meta_request->finish_callback = options->finish_callback;
 
     // Initialize chunked checksum data
-    meta_request->chunked_checksum_data.enabled = options->compute_chunked_checksums;
+    meta_request->chunked_checksum_data.enabled = true;
     meta_request->chunked_checksum_data.chunk_size = (256 * 1024);  // default 256k
     //meta_request->chunked_checksum_data.alignment_hint = options->chunked_checksum_alignment_hint;
 
