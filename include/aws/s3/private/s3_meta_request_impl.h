@@ -13,6 +13,7 @@
 #include <aws/common/ref_count.h>
 #include <aws/common/task_scheduler.h>
 #include <aws/http/request_response.h>
+#include <aws/checksums/crc.h>
 
 #include "aws/s3/private/s3_checksums.h"
 #include "aws/s3/private/s3_client_impl.h"
@@ -130,7 +131,7 @@ struct aws_s3_meta_request_vtable {
 struct aws_s3_chunked_checksum {
     uint64_t offset_start;
     uint64_t offset_end;
-    struct aws_byte_buf* checksum_data;
+    uint32_t checksum_data;
 };
 
 /**
@@ -191,13 +192,6 @@ struct aws_s3_meta_request {
         bool enabled;
         size_t chunk_size; // The preferred size of chunks
         // uint64_t alignment_hint; // This is a hint that can be used for hinting that the first part should be checksummed with a different offset // TODO: Implement this
-
-        // Array to store completed checksums
-        struct aws_array_list chunk_checksums;  // array of struct aws_s3_chunked_checksum
-
-        // Running state
-        uint64_t total_bytes_received;
-        uint64_t last_checksummed_offset;
     } chunked_checksum_data;
 
 

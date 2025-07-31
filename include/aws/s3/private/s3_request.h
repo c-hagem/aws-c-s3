@@ -193,6 +193,10 @@ struct aws_s3_request {
     /* The algorithm used to validate the checksum */
     enum aws_s3_checksum_algorithm validation_algorithm;
 
+    uint64_t total_bytes_received;
+    uint64_t last_checksummed_offset;
+    struct aws_array_list chunk_checksums;
+
     /* Get request only, was there a checksum to validate */
     bool did_validate;
 
