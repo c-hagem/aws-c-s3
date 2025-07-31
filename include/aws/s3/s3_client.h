@@ -197,6 +197,10 @@ struct aws_s3_meta_request_receive_body_extra_info {
     /* Associated buffer
      */
     struct aws_s3_buffer_ticket *ticket;
+    /**
+     *
+     */
+     struct aws_array_list* chunked_checksums;
 };
 
 typedef int(aws_s3_meta_request_receive_body_callback_ex_fn)(
@@ -931,7 +935,7 @@ struct aws_s3_meta_request_options {
     /*
      *
      * (Experimental)
-     * Enable the CRT to compute chunked checksums for the data of this meta request
+     * Enable the CRT to compute chunked checksums for the data of this meta request.
      */
      bool compute_chunked_checksums;
      uint64_t chunked_checksum_size;

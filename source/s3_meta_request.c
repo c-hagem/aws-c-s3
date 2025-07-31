@@ -1499,14 +1499,13 @@ static int s_s3_meta_request_incoming_body(
                     .len = chunk_size
                 };
                 struct aws_byte_buf* checksum_output;
-                auto* checksum_for_chunk = aws_checksum_new(meta_request->allocator, AWS_SCA_CRC32C);
+                struct aws_s3_checksum * checksum_for_chunk = aws_checksum_new(meta_request->allocator, AWS_SCA_CRC32C);
                 struct aws_byte_buf chunk_checksum;
                 AWS_ZERO_STRUCT(chunk_checksum);
-                size_t encoded_checksum_len = 0;
                 // TODO: Use correct constant here instead of hard coding "4"
                 aws_byte_buf_init(checksum_output, meta_request->allocator, 4);
                 aws_checksum_update(checksum_for_chunk, &chunk_cursor);
-                aws_checksum_finalize(checksum_for_chunk, &checksum_for_chunk);
+                aws_checksum_finalize(checksum_for_chunk, checksum_output);
                 uint64_t chunk_end;
                 aws_high_res_clock_get_ticks(&chunk_start);
 
@@ -1516,7 +1515,6 @@ static int s_s3_meta_request_incoming_body(
                     .offset_start = meta_request->chunked_checksum_data.last_checksummed_offset,
                     .offset_end = meta_request->chunked_checksum_data.last_checksummed_offset + chunk_size,
                     .checksum_data = checksum_output,
-                    .computation_time_ns = chunk_duration_ns
                  };
 
                 // Append to the array list
@@ -1533,7 +1531,7 @@ static int s_s3_meta_request_incoming_body(
                     } else {
                         AWS_LOGF_ERROR(AWS_LS_S3_META_REQUEST,
                             "id=%p Failed to append chunked checksum to array", (void *)meta_request);
-                        aws_byte_buf_clean_up(&checksum_output);
+                        aws_byte_buf_clean_up(checksum_output);
                     }
 
                 }
@@ -2024,6 +2022,15 @@ static void s_s3_meta_request_event_delivery_task(struct aws_task *task, void *a
                                 aws_error_name(error_code));
                         }
                     }
+
+                    /* Compute final chunk checksum if enabled and there's remaining data */
+                    /*if (meta_request->chunked_checksum_data.enabled) {
+                        //uint64_t bytes_since_last = meta_request->chunked_checksum_data.total_bytes_received -
+                        //                           meta_request->chunked_checksum_data.last_checksummed_offset;
+                        // TODO:
+
+                    }*/
+
                     if (error_code == AWS_ERROR_SUCCESS) {
                         if (request->send_data.metrics) {
                             struct aws_s3_request_metrics *metric = request->send_data.metrics;
@@ -2053,7 +2060,10 @@ static void s_s3_meta_request_event_delivery_task(struct aws_task *task, void *a
                                 meta_request,
                                 &response_body,
                                 (struct aws_s3_meta_request_receive_body_extra_info){
-                                    .range_start = request->part_range_start, .ticket = request->ticket},
+                                    .range_start = request->part_range_start,
+                                    .ticket = request->ticket,
+                                    .chunked_checksums = meta_request->chunked_checksum_data.enabled ?
+                                        &meta_request->chunked_checksum_data.chunk_checksums : NULL},
                                 meta_request->user_data)) {
                             error_code = aws_last_error_or_unknown();
                             AWS_LOGF_ERROR(

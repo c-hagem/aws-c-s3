@@ -130,8 +130,7 @@ struct aws_s3_meta_request_vtable {
 struct aws_s3_chunked_checksum {
     uint64_t offset_start;
     uint64_t offset_end;
-    struct aws_byte_buf checksum_data;
-    uint64_t computation_time_ns;
+    struct aws_byte_buf* checksum_data;
 };
 
 /**
