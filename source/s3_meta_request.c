@@ -1466,70 +1466,71 @@ static int s_s3_meta_request_incoming_body(
         return AWS_OP_ERR;
     }
 
-    // If a chunked checksum is requested, do the following steps
-    // 1. Check if we have enough data (from last_checksummed_offset until now)
-    // 2. and if we have enough for a new chunk (256k), emit it here
-    // 3. Log the duration this took
+    // If a chunked checksum is requested, use streaming approach to compute checksums
+    // as data flows through, storing completed chunks when boundaries are crossed
     if (meta_request->chunked_checksum_data.enabled) {
         const size_t chunk_size = meta_request->chunked_checksum_data.chunk_size;
+        const uint8_t *data_ptr = data->ptr;
+        size_t remaining_data = data->len;
 
-            // Update received data length
-            request->total_bytes_received += (data->len);
+        // Update total received data length
+        request->total_bytes_received += data->len;
 
-            // Check if we have enough for a complete chunk
-            uint64_t bytes_since_last = request->total_bytes_received -
-                                       request->last_checksummed_offset;
-            AWS_ASSERT(bytes_since_last > 0);
-
-            if (bytes_since_last >= chunk_size) {
-                AWS_LOGF_INFO(AWS_LS_S3_META_REQUEST,
-                    "id=%p Computing checksum, total received %d , since last %d, last checksummed offset %d  ",
-                    (void *)meta_request, request->total_bytes_received, bytes_since_last, request->last_checksummed_offset);
-                uint64_t chunk_start;
-                aws_high_res_clock_get_ticks(&chunk_start);
-
-
-                //struct aws_s3_checksum *checksum = aws_checksum_new(request->allocator, AWS_SCA_CRC32);
-                //struct aws_byte_cursor cursor {
-                //    .len = chunk_size,
-                //    .ptr =  request->send_data.response_body.buffer + request->last_checksummed_offset
-                //};
-                uint32_t checksum = aws_checksums_crc32c(request->send_data.response_body.buffer + request->last_checksummed_offset, chunk_size, 0);
-                uint64_t chunk_end;
-                aws_high_res_clock_get_ticks(&chunk_end);
-
-                uint64_t chunk_duration_ns = chunk_end - chunk_start;
-                // Finalize the checksum for this chunk
-                // Allocate a new chunk record
-                //
+        // Process incoming data incrementally
+        size_t data_offset = 0;
+        while (data_offset < data->len) {
+            // Calculate current global position and position within chunk
+            uint64_t global_offset = request->total_bytes_received - data->len + data_offset;
+            uint64_t chunk_offset = global_offset % chunk_size;
+            
+            // If starting a new chunk, reset running checksum
+            if (chunk_offset == 0 && global_offset > 0) {
+                request->running_checksum = 0;
+            }
+            
+            // Calculate how many bytes to process (until end of data or end of chunk)
+            size_t bytes_to_chunk_end = chunk_size - chunk_offset;
+            size_t bytes_remaining = data->len - data_offset;
+            size_t bytes_to_process = (bytes_to_chunk_end < bytes_remaining) ? bytes_to_chunk_end : bytes_remaining;
+            
+            // Update running checksum with this data
+            request->running_checksum = aws_checksums_crc32c(data->ptr + data_offset, bytes_to_process, request->running_checksum);
+            
+            data_offset += bytes_to_process;
+            
+            // Check if we completed a chunk
+            if (chunk_offset + bytes_to_process == chunk_size) {
+                uint64_t chunk_start = global_offset - chunk_offset;
+                uint64_t chunk_end = chunk_start + chunk_size;
+                
+                // Store the completed chunk
                 struct aws_s3_chunked_checksum chunk_record = {
-                    .offset_start = request->last_checksummed_offset,
-                    .offset_end = request->last_checksummed_offset + chunk_size,
-                    .checksum_data = checksum,
+                    .offset_start = chunk_start,
+                    .offset_end = chunk_end,
+                    .checksum_data = request->running_checksum,
                 };
-                // Append to the array list
-                if (aws_array_list_push_back(&request->chunk_checksums,
-                        &chunk_record) == AWS_OP_SUCCESS) {
-
+                
+                if (aws_array_list_push_back(&request->chunk_checksums, &chunk_record) == AWS_OP_SUCCESS) {
                     size_t chunk_count = aws_array_list_length(&request->chunk_checksums);
-
                     AWS_LOGF_INFO(AWS_LS_S3_META_REQUEST,
-                        "id=%p Stored chunk checksum #%zu: offset %" PRIu64 "-%" PRIu64 ", computed in %" PRIu64 "ns",
+                        "id=%p Stored streaming chunk checksum #%zu: offset %" PRIu64 "-%" PRIu64 ", checksum=0x%08x",
                         (void *)meta_request, chunk_count,
-                        chunk_record.offset_start, chunk_record.offset_end, chunk_duration_ns);
-
-                    } else {
-                        AWS_LOGF_ERROR(AWS_LS_S3_META_REQUEST,
-                            "id=%p Failed to append chunked checksum to array", (void *)meta_request);
-                    }
-                request->last_checksummed_offset += chunk_size;
-
-
+                        chunk_record.offset_start, chunk_record.offset_end, chunk_record.checksum_data);
+                } else {
+                    AWS_LOGF_ERROR(AWS_LS_S3_META_REQUEST,
+                        "id=%p Failed to append streaming chunked checksum to array", (void *)meta_request);
                 }
-            AWS_LOGF_TRACE(AWS_LS_S3_META_REQUEST,
-                "id=%p Chunked checksum progress: %" PRIu64 " total bytes, %" PRIu64 " pending for next chunk",
-                (void *)meta_request, request->total_bytes_received, bytes_since_last);
+                
+                request->last_checksummed_offset = chunk_end;
+            }
         }
+        
+        // Log progress
+        uint64_t bytes_since_last = request->total_bytes_received - request->last_checksummed_offset;
+        AWS_LOGF_TRACE(AWS_LS_S3_META_REQUEST,
+            "id=%p Streaming checksum progress: %" PRIu64 " total bytes, %" PRIu64 " pending for next chunk",
+            (void *)meta_request, request->total_bytes_received, bytes_since_last);
+    }
 
 
 
@@ -2014,12 +2015,29 @@ static void s_s3_meta_request_event_delivery_task(struct aws_task *task, void *a
                     }
 
                     /* Compute final chunk checksum if enabled and there's remaining data */
-                    /*if (meta_request->chunked_checksum_data.enabled) {
-                        //uint64_t bytes_since_last = meta_request->chunked_checksum_data.total_bytes_received -
-                        //                           meta_request->chunked_checksum_data.last_checksummed_offset;
-                        // TODO:
-
-                    }*/
+                    if (meta_request->chunked_checksum_data.enabled) {
+                        uint64_t bytes_since_last = request->total_bytes_received - request->last_checksummed_offset;
+                        
+                        if (bytes_since_last > 0) {
+                            // Store the final partial chunk
+                            struct aws_s3_chunked_checksum final_chunk_record = {
+                                .offset_start = request->last_checksummed_offset,
+                                .offset_end = request->total_bytes_received,
+                                .checksum_data = request->running_checksum,
+                            };
+                            
+                            if (aws_array_list_push_back(&request->chunk_checksums, &final_chunk_record) == AWS_OP_SUCCESS) {
+                                size_t chunk_count = aws_array_list_length(&request->chunk_checksums);
+                                AWS_LOGF_INFO(AWS_LS_S3_META_REQUEST,
+                                    "id=%p Stored final streaming chunk checksum #%zu: offset %" PRIu64 "-%" PRIu64 ", checksum=0x%08x",
+                                    (void *)meta_request, chunk_count,
+                                    final_chunk_record.offset_start, final_chunk_record.offset_end, final_chunk_record.checksum_data);
+                            } else {
+                                AWS_LOGF_ERROR(AWS_LS_S3_META_REQUEST,
+                                    "id=%p Failed to append final streaming chunked checksum to array", (void *)meta_request);
+                            }
+                        }
+                    }
 
                     if (error_code == AWS_ERROR_SUCCESS) {
                         if (request->send_data.metrics) {

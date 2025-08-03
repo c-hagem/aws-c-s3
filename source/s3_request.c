@@ -3,8 +3,9 @@
  * SPDX-License-Identifier: Apache-2.0.
  */
 
-#include "aws/s3/private/s3_request.h"
+
 #include "aws/s3/private/s3_meta_request_impl.h"
+#include "aws/s3/private/s3_checksums.h"
 #include "aws/s3/private/s3_util.h"
 #include <aws/auth/signable.h>
 #include <aws/common/clock.h>
@@ -48,6 +49,7 @@ struct aws_s3_request *aws_s3_request_new(
     }
     request->last_checksummed_offset = 0;
     request->total_bytes_received = 0;
+    request->running_checksum = 0;
 
     return request;
 }

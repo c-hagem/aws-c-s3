@@ -196,6 +196,15 @@ struct aws_s3_request {
     uint64_t total_bytes_received;
     uint64_t last_checksummed_offset;
     struct aws_array_list chunk_checksums;
+    
+    /* Running checksum state for streaming chunked checksum computation.
+     * This field maintains the CRC32C checksum of data currently being processed
+     * for the active chunk. As data flows through, this checksum is updated
+     * incrementally. When a chunk boundary is crossed, this value is stored in
+     * chunk_checksums and reset for the next chunk. This streaming approach
+     * eliminates the need to buffer entire chunks in memory before computing
+     * their checksums. */
+    uint32_t running_checksum;
 
     /* Get request only, was there a checksum to validate */
     bool did_validate;
