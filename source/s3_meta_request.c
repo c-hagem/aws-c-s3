@@ -28,6 +28,7 @@
 #include <aws/io/stream.h>
 #include <errno.h>
 #include <inttypes.h>
+#include <stdlib.h>
 
 static const size_t s_dynamic_body_initial_buf_size = KB_TO_BYTES(1);
 static const size_t s_default_body_streaming_priority_queue_size = 16;
@@ -334,7 +335,36 @@ int aws_s3_meta_request_init_base(
 
     // Initialize chunked checksum data
     meta_request->chunked_checksum_data.enabled = true;
-    meta_request->chunked_checksum_data.chunk_size = (256 * 1024);  // default 256k
+    
+    // Check for environment variable override for chunk size
+    size_t chunk_size = (256 * 1024);  // default 256k
+    const char* env_chunk_size = getenv("EXPERIMENTAL_CRT_CHUNKSIZE_OVERRIDE");
+    if (env_chunk_size != NULL) {
+        char* endptr;
+        unsigned long override_size = strtoul(env_chunk_size, &endptr, 10);
+        if (*endptr != '\0' || override_size == 0) {
+            AWS_LOGF_ERROR(AWS_LS_S3_META_REQUEST,
+                "id=%p Invalid EXPERIMENTAL_CRT_CHUNKSIZE_OVERRIDE value: %s",
+                (void *)meta_request, env_chunk_size);
+            return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
+        }
+        
+        // Validate that chunk size evenly divides the part size (8MB)
+        const size_t part_size_8mb = 8 * 1024 * 1024;
+        if (part_size_8mb % override_size != 0) {
+            AWS_LOGF_ERROR(AWS_LS_S3_META_REQUEST,
+                "id=%p Chunk size %" PRIu64 " does not evenly divide 8MB part size",
+                (void *)meta_request, (uint64_t)override_size);
+            return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
+        }
+        
+        chunk_size = (size_t)override_size;
+        AWS_LOGF_INFO(AWS_LS_S3_META_REQUEST,
+            "id=%p Using environment override chunk size: %" PRIu64,
+            (void *)meta_request, (uint64_t)chunk_size);
+    }
+    
+    meta_request->chunked_checksum_data.chunk_size = chunk_size;
     //meta_request->chunked_checksum_data.alignment_hint = options->chunked_checksum_alignment_hint;
 
     if (meta_request->chunked_checksum_data.enabled) {
